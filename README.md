@@ -1,0 +1,2 @@
+# PyPhiPlayer
+这是一个使用Python编写的Phigros模拟器
