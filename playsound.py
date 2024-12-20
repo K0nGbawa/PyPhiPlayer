@@ -50,19 +50,21 @@ class DirectSound:
         buffer.QueryInterface(ds.IID_IDirectSoundNotify).SetNotificationPositions((-1, event))
         buffer.Update(0, self._bufdata)
         buffer.SetVolume(self._volume)
-        buffer.Play(0)
         return event, buffer
 
     def set_volume(self, v: float):
         self._volume = int(-10000 if v <= 1e-5 else (0 if v >= 1.0 else 2000 * math.log10(v)))
 
-    def play(self, wait: bool = False):
-        event, buffer = self._play()
-        self._buffers.append(buffer)
+    def play(self, num: int = 1, wait: bool = False):
+        objs = [self._play() for _ in range(num)]
+        self._buffers.extend(map(lambda x: x[1], objs))
+        
+        (*map(lambda x: x[1].Play(0), objs), )
 
         for buffer in self._buffers:
             if buffer.GetStatus() == 0:
                 self._buffers.remove(buffer)
 
         if wait:
-            w32e.WaitForSingleObject(event, -1)
+            (*map(lambda x: w32e.WaitForSingleObject(x[0], -1), objs), )
+            

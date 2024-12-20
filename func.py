@@ -1,9 +1,10 @@
 import math
+import sys
 
 import pygame.font
 from OpenGL.GL import *
 from PIL import Image, ImageFilter, ImageEnhance
-
+from pydub import AudioSegment
 from const import *
 
 
@@ -57,28 +58,38 @@ def resize_image(img: Image.Image, target_width: int, target_height: int) -> Ima
     return img
 
 def crop_image_to_window_size(img: Image.Image):
-    if img.width > WINDOW_WIDTH or img.height > WINDOW_HEIGHT:
-        if img.width > img.height:
-            left = (img.width - WINDOW_WIDTH) // 2
-            top = 0
-            right = left + WINDOW_WIDTH
-            bottom = img.height
-        else:
-            left = 0
-            top = (img.height - WINDOW_HEIGHT) // 2
-            right = img.width
-            bottom = top + WINDOW_HEIGHT
-        img = img.crop((left, top, right, bottom))
-        return img
+    if img.width > img.height:
+        left = (img.width - WINDOW_WIDTH) // 2
+        top = 0
+        right = left + WINDOW_WIDTH
+        bottom = img.height
+    else:
+        left = 0
+        top = (img.height - WINDOW_HEIGHT) // 2
+        right = img.width
+        bottom = top + WINDOW_HEIGHT
+    img = img.crop((left, top, right, bottom))
+    return img
 
 def to_BG(img: Image.Image) -> Image.Image:
     blur = ImageFilter.GaussianBlur(75.)
     img = img.filter(blur)
     brightness = ImageEnhance.Brightness(img)
     img = brightness.enhance(0.6)
-    img = resize_image(img, 800, 600)
+    img = resize_image(img, WINDOW_WIDTH, WINDOW_HEIGHT)
     img = crop_image_to_window_size(img)
     return img
+
+def get_audio_length(file):
+    audio = AudioSegment.from_file(file)
+    return audio.duration_seconds
+
+def get_argv(argv: str):
+    if f"-{argv}" in sys.argv:
+        value = sys.argv.index(f"-{argv}")+1
+    else:
+        value = input(f"{argv}: ")
+    return value
 
 def draw_image_left_top(x: float, y: float, tex_id: int, width:float, height:float):
     glColor4f(1., 1., 1., 1.)

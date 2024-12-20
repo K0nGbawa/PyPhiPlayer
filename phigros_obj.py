@@ -8,7 +8,7 @@ from PIL import Image
 
 from playsound import DirectSound, open_audio
 
-from const import WINDOW_WIDTH, WINDOW_HEIGHT, X, Y
+from const import WINDOW_WIDTH, WINDOW_HEIGHT, X, Y, X_SCALE
 from func import phi_time2second, linear, draw_line_ex, draw_image_center_ex, get_texture_id, draw_image_top_ex, \
     draw_image_bottom_ex, draw_quad_center_ex, draw_quad_center_ex
 from logger import *
@@ -35,6 +35,8 @@ try:
         open_audio("./resources/sounds/flick.wav")
     )
     HE_TEXTURES: tuple = tuple([get_texture_id(Image.open(f"./resources/textures/HX/{i+1}.png")) for i in range(30)])
+    NOTE_TEXTURES = tuple([(i[0], i[1]*X_SCALE, i[2] if index == 5 or index == 11 else i[2]*X_SCALE) for index, i in enumerate(NOTE_TEXTURES)])
+    HE_TEXTURES = tuple([(i[0], i[1]*X_SCALE, i[2]*X_SCALE) for index, i in enumerate(HE_TEXTURES)])
 except (TypeError, FileNotFoundError) as e:
     error(f"资源缺失：{e}")
     __import__("time").sleep(1)
@@ -138,6 +140,7 @@ class Line:
         self.r, self.re_index = get_event_value(self.rotate_events, 0, 0)
         self.above_notes = [Note(convert_note(note, self.T), 1) for note in sorted(data["notesAbove"], key=lambda x: x["time"])]
         self.below_notes = [Note(convert_note(note, self.T), -1) for note in sorted(data["notesBelow"], key=lambda x: x["time"])]
+        self.above_holds = []
         self.above_note_index = 0
         self.below_note_index = 0
         self.current_floor_position = 0
@@ -186,7 +189,6 @@ class Line:
                 else:
                     self.HE.append(HE(self.x, self.y, self.r, note.xPosition, time))
             if judged:
-                self.above_notes.remove(note)
                 self.combo += 1
                 self.perfect += 1
         for index, note in enumerate(self.below_notes):
@@ -202,9 +204,10 @@ class Line:
                 else:
                     self.HE.append(HE(self.x, self.y, self.r, note.xPosition, time))
             if judged:
-                self.below_notes.remove(note)
                 self.combo += 1
                 self.perfect += 1
+        self.above_notes = list(filter(lambda n: not n.judged, self.above_notes))
+        self.below_notes = list(filter(lambda n: not n.judged, self.below_notes))
 
     def get_combo(self):
         tmp = self.combo
@@ -218,6 +221,7 @@ class Note:
         if "HX" in data:
             self.HX = data["HX"]
         self.judge_time = data["time"]
+        self.judged = False
         self.type = data["type"]-1
         self.hold_time = data["holdTime"]
         self.end_time = self.judge_time+self.hold_time
@@ -230,15 +234,16 @@ class Note:
         self.dire = dire
         self.r_offset = 180*-(self.dire+1)/2
         self.timer = 1000000
+        self.hold_len = self.hold_time * self.speed * Y
 
     def draw(self, x: float, y: float, r: float, current_fp: float, time: float):
         self.current_fp = (self.floor_position - current_fp) if self.type != 2 or time < self.judge_time else 0
         if self.current_fp >= -0.001:
-            if self.type == 2 and self.speed > 0:
-                self.x, self.y = calc_note_position(self.current_fp if self.judge_time >= time else 0, self.xPosition, x, y,
+            if self.type == 2 and self.speed > 0 and self.end_time > time:
+                self.x, self.y = calc_note_position(self.current_fp if self.judge_time > time else 0, self.xPosition, x, y,
                                                     r, self.dire, 1)
                 if time < self.judge_time:
-                    hold_len = self.hold_time * self.speed * Y
+                    hold_len = self.hold_len
                     draw_image_top_ex(self.x, self.y, r+self.r_offset, 0.1, *self.get_texture())
                 else:
                     hold_len = (self.end_time - time) * self.speed * Y
@@ -253,12 +258,16 @@ class Note:
         if time >= self.judge_time and not self.judge:
             NOTE_SOUNDS[self.type].play()
             self.judge = True
-            return self.type != 2
-        elif time >= self.end_time:
+            self.judged = self.type != 2
+            return self.judged
+        elif time > self.end_time:
+            self.judged = True
             return True
         else:
             return False
     def get_texture(self): return NOTE_TEXTURES[self.type] if not self.HX else NOTE_TEXTURES[self.type + 6]
+
+HE_size = 20*X_SCALE
 
 class HE:
     def __init__(self, x, y, r, xpos, time, _type:int=0):
@@ -270,30 +279,32 @@ class HE:
         self.time = time
         self.over = False
         if self.type != 0:
-            self.distance = random.randint(150, 200)
+            self.distance = random.randint(150, 200)*X_SCALE
             self.angle = math.radians(random.randint(0, 360))
             self.a = 1
+            self._cos = math.cos(self.angle)
+            self._sin = math.sin(self.angle)
         else:
             self.cubes = [HE(x, y, r, xpos, time, 1) for _ in range(4)]
 
-    def draw(self, time, prs=0):
-        if time - self.time > 0.5:
+    def draw(self, time):
+        process = time - self.time
+        if process > 0.5:
             self.over = True
-            del self.cubes
             return
         if self.type == 0:
-            process = time - self.time
             index = math.floor(process*60) if process<0.5 else 29
             draw_image_center_ex(self.x, self.y, 0, 0.65, *HE_TEXTURES[index])
             for i in self.cubes:
-                i.draw(time, process)
+                i.draw(time)
         else:
-            process = prs*2
+            process = process*2
             easing_process = cubic(process)
-            x = self.x + self.distance*math.cos(self.angle)*easing_process
-            y = self.y + self.distance*math.sin(self.angle)*easing_process
+            real_distance = self.distance*easing_process
+            x = self.x + real_distance*self._cos
+            y = self.y + real_distance*self._sin
             if process >= 0.5:
                 self.a = 1-(process-0.5)*2
-            draw_quad_center_ex(x, y, 20, 20, (1, 0.88, 0.66, self.a))
+            draw_quad_center_ex(x, y, HE_size, HE_size, (1, 0.88, 0.66, self.a))
 
 

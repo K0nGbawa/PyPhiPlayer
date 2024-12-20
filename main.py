@@ -1,11 +1,20 @@
+import os
+import subprocess
+import sys
 import time
+from ctypes import windll
+
 from PIL import Image
 from pygame.locals import OPENGL, DOUBLEBUF
 
 import io
+import numpy as np
+
+from tqdm import tqdm
 
 import pgr_ui
-from func import draw_image_left_top, get_texture_id, to_BG, phi_time2second, draw_image_center_ex, get_text_texture_id
+from func import draw_image_left_top, get_texture_id, to_BG, phi_time2second, draw_image_center_ex, get_text_texture_id, \
+    get_audio_length, get_argv
 import err_hook
 import parse_chart
 from tkinter.filedialog import askopenfilename
@@ -15,6 +24,46 @@ import pygame
 from const import *
 from logger import *
 
+class Phi:
+    def __init__(self):
+        self.game_time = 0
+        self.fps_time = 0
+        self.combo = 0
+        self.lst_cb = 0
+        self.lst_pf = 0
+    def update(self, delta: float):
+        pf = 0
+        glClear(GL_COLOR_BUFFER_BIT)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                windll.kernel32.ExitProcess(0)
+        self.game_time += delta
+        """self.fps_time += delta
+        if self.fps_time >= 1:
+            info(f"FPS: {clock.get_fps()}")
+            self.fps_time = 0"""
+
+        draw_image_left_top(0, 0, *chart_info["BG"])
+
+        for line in lines:
+            line.calc(self.game_time, delta)
+            line.draw()
+        for line in lines:
+            line.draw_notes(self.game_time)
+        for line in lines:
+            line.draw_HE(self.game_time)
+            self.combo += line.get_combo()
+            pf += line.perfect
+        if self.combo != self.lst_cb:
+            ui.set_combo(self.combo)
+        if self.lst_pf != pf:
+            ui.set_score(pf * note_score)
+        ui.draw_ui()
+        self.lst_pf = pf
+        self.lst_cb = self.combo
+
+        pygame.display.flip()
 
 pygame.init()
 pygame.mixer.init()
@@ -88,43 +137,35 @@ else:
 audio_stream = io.BytesIO(chart_info["Audio"])
 pygame.mixer.music.load(audio_stream)
 clock = pygame.time.Clock()
-combo = 0
-game_time = 0
-fps_time = 0
-lst_pf = 0
-lst_cb = 0
-pygame.mixer.music.play()
-while True:
-    pf = 0
-    delta = clock.tick() / 1000
-    glClear(GL_COLOR_BUFFER_BIT)
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            quit()
-    game_time += delta
-    fps_time += delta
-    if fps_time >= 1:
-        info(f"FPS: {clock.get_fps()}")
-        fps_time = 0
+game = Phi()
+if "-render" not in sys.argv:
+    pygame.mixer.music.play()
+    while True:
+        delta = clock.tick()/1000
+        game.update(delta)
+else:
+    audio_io = io.BytesIO(chart_info["Audio"])
+    audio_duration = get_audio_length(audio_io)
+    fps = int(get_argv("fps"))
+    delta = 1/fps
+    frame_count = int(audio_duration/delta)
+    bitrate = get_argv("bitrate")
+    with open("tmp", "wb") as f:
+        f.write(chart_info["Audio"])
+    ffmpeg_command = [
+        "ffmpeg", "-y", "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{res[0]}x{res[1]}", "-pix_fmt", "rgb24",
+        "-r", str(fps), "-i", "-", "-i", "./tmp", "-c:v", "libx264", "-b:v", f"{bitrate}k", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-strict", "experimental", "./output.mp4"
+    ]
+    process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-    draw_image_left_top(0, 0, *chart_info["BG"])
+    for frame in tqdm(range(frame_count), desc="Rendering video", unit="frames"):
+        game.update(delta)
+        frame_image = glReadPixels(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, GL_RGB, GL_UNSIGNED_BYTE)
+        f = np.frombuffer(frame_image, dtype=np.uint8).reshape((WINDOW_HEIGHT, WINDOW_WIDTH, 3))
+        f = np.flipud(f)
+        process.stdin.write(f.tobytes())
 
-    for line in lines:
-        line.calc(game_time, delta)
-        line.draw()
-    for line in lines:
-        line.draw_notes(game_time)
-    for line in lines:
-        line.draw_HE(game_time)
-        combo += line.get_combo()
-        pf += line.perfect
-    if combo != lst_cb:
-        ui.set_combo(combo)
-    if lst_pf != pf:
-        ui.set_score(pf*note_score)
-    ui.draw_ui()
-    lst_pf = pf
-    lst_cb = combo
-
-    pygame.display.flip()
+    process.stdin.close()
+    process.wait()
+    os.remove("tmp")

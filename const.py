@@ -1,6 +1,22 @@
+import sys
+
+
+def get_argv(argv: str):
+    if f"-{argv}" in sys.argv:
+        value = sys.argv[sys.argv.index(f"-{argv}")+1]
+    else:
+        value = input(f"{argv}: ")
+    return value
+
 WINDOW_WIDTH: int = 800
 WINDOW_HEIGHT: int = 600
+if '-render' in sys.argv:
+    res = get_argv("res").split("x")
+    WINDOW_WIDTH, WINDOW_HEIGHT = [int(i) for i in res]
 WINDOW_SIZE: list[int] = [WINDOW_WIDTH, WINDOW_HEIGHT]
+
+X_SCALE = WINDOW_WIDTH/800
+Y_SCALE = WINDOW_HEIGHT/600
 
 RED: str = "\033[91m"
 GREEN: str = "\033[92m"
